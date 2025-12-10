@@ -1,0 +1,5 @@
+{
+  "name": "Flomodoro",
+  "description": "A sleek, iOS-styled Pomodoro timer with customizable focus and break intervals, featuring a circular progress visualization.",
+  "requestFramePermissions": []
+}
