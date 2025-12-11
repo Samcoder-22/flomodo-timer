@@ -17,4 +17,5 @@ export interface TimerState {
   timeLeft: number; // in seconds
   isActive: boolean;
   round: number;
+  endTime: number | null; // Timestamp when the current timer ends
 }

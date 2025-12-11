@@ -9,8 +9,23 @@ export const useTimer = (settings: TimerSettings) => {
     if (savedState) {
       try {
         const parsed = JSON.parse(savedState);
-        // Ensure timer doesn't start automatically on refresh
-        return { ...parsed, isActive: false };
+        
+        // If the timer was running when saved, check if it should still be running or finished
+        if (parsed.isActive && parsed.endTime) {
+            const now = Date.now();
+            const left = Math.ceil((parsed.endTime - now) / 1000);
+            
+            if (left > 0) {
+                // Timer is still running, sync timeLeft
+                return { ...parsed, timeLeft: left };
+            } else {
+                // Timer finished while app was closed. 
+                // We return timeLeft: 0 so the effect triggers the switchMode logic immediately.
+                return { ...parsed, timeLeft: 0 };
+            }
+        }
+        
+        return { ...parsed, isActive: false, endTime: null };
       } catch (e) {
         console.error("Failed to parse saved state", e);
       }
@@ -21,6 +36,7 @@ export const useTimer = (settings: TimerSettings) => {
       timeLeft: settings.focusDuration * 60,
       isActive: false,
       round: 1,
+      endTime: null,
     };
   });
 
@@ -41,13 +57,13 @@ export const useTimer = (settings: TimerSettings) => {
     localStorage.setItem('flomodoro-state', JSON.stringify(state));
   }, [state]);
 
-  // Update timer when settings change, but NOT when pausing/playing (fixing the bug)
-  // Only depend on specific duration settings
+  // Update timer when settings change, but NOT when active
   useEffect(() => {
     if (!state.isActive) {
       setState(prev => ({
         ...prev,
         timeLeft: getDurationForMode(prev.mode),
+        endTime: null, // Ensure clean state
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,24 +103,42 @@ export const useTimer = (settings: TimerSettings) => {
         timeLeft: getDurationForMode(nextMode),
         isActive: false,
         round: nextRound,
+        endTime: null,
       };
     });
   }, [settings, getDurationForMode]);
 
   const tick = useCallback(() => {
     setState((prev) => {
-      if (prev.timeLeft <= 0) {
-        return prev; // Logic handled in effect
+      if (!prev.isActive || !prev.endTime) return prev;
+
+      const now = Date.now();
+      const secondsLeft = Math.ceil((prev.endTime - now) / 1000);
+
+      // If we are finished or past finished
+      if (secondsLeft <= 0) {
+        return { ...prev, timeLeft: 0 };
       }
-      return { ...prev, timeLeft: prev.timeLeft - 1 };
+
+      // Only update if the second has actually changed to avoid unnecessary renders
+      if (secondsLeft !== prev.timeLeft) {
+        return { ...prev, timeLeft: secondsLeft };
+      }
+      
+      return prev;
     });
   }, []);
 
   useEffect(() => {
     if (state.isActive && state.timeLeft > 0) {
-      timerRef.current = window.setInterval(tick, 1000);
+        // We use a shorter interval (250ms) to ensure the UI updates close to the actual second change
+        // This makes the timer feel more responsive and less prone to "skipping" a visual second
+        timerRef.current = window.setInterval(tick, 250);
     } else if (state.timeLeft === 0) {
+      // Handle completion
       if (timerRef.current) clearInterval(timerRef.current);
+      // Small delay to ensure the user sees "00:00" briefly before switching? 
+      // Or switch immediately. Let's switch immediately to avoid "stuck at 0" confusion.
       switchMode();
     }
 
@@ -113,13 +147,38 @@ export const useTimer = (settings: TimerSettings) => {
     };
   }, [state.isActive, state.timeLeft, tick, switchMode]);
 
-  const toggleTimer = () => {
-    setState(prev => ({ ...prev, isActive: !prev.isActive }));
-  };
+  const toggleTimer = useCallback(() => {
+    setState(prev => {
+        const now = Date.now();
+        
+        if (prev.isActive) {
+            // Pausing: Calculate exact remaining time and clear endTime
+            // We trust the timeLeft from the last tick OR recalculate for precision
+            const remaining = prev.endTime 
+                ? Math.max(0, Math.ceil((prev.endTime - now) / 1000))
+                : prev.timeLeft;
 
-  const skipTimer = () => {
+            return { 
+                ...prev, 
+                isActive: false, 
+                timeLeft: remaining,
+                endTime: null 
+            };
+        } else {
+            // Playing: Calculate new endTime based on current timeLeft
+            const newEndTime = now + (prev.timeLeft * 1000);
+            return { 
+                ...prev, 
+                isActive: true, 
+                endTime: newEndTime 
+            };
+        }
+    });
+  }, []);
+
+  const skipTimer = useCallback(() => {
     switchMode();
-  };
+  }, [switchMode]);
 
   return {
     state,
